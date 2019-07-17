@@ -10,6 +10,8 @@ import android.util.Log;
 import android.os.AsyncTask;
 import android.support.annotation.Nullable;
 
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.io.BufferedInputStream;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -97,13 +99,9 @@ public class SocketClient {
             @Override
             protected Void doInBackground(String... params) {
                 try {
-                    String message = params[0];
+                    byte[] message = params[0].getBytes();
                     OutputStream outputStream = clientSocket.getOutputStream();
-                    PrintStream printStream = new PrintStream(outputStream);
-                    printStream.print(message + (char) EOT);
-                    printStream.flush();
-                    //debug log
-                    Log.d(eTag, "client sent message: " + message);
+                    outputStream.write(message);
                 } catch (IOException e) {
                     handleIOException(e);
                 }
@@ -168,30 +166,31 @@ public class SocketClient {
 
     private void watchIncoming() {
         try {
-            String data = "";
-            InputStream inputStream = clientSocket.getInputStream();
-            while (isOpen) {
-                int incomingByte = inputStream.read();
-
-                if (incomingByte == -1) {
-                    //debug log
-                    Log.v(eTag, "Client disconnected");
-                    isOpen = false;
-                    //emit event
-                    WritableMap eventParams = Arguments.createMap();
-                    sendEvent(mReactContext, event_closed, eventParams);
-                } else if (incomingByte == EOT) {
-                    //debug log
-                    Log.d(eTag, "client received message: " + data);
-                    //emit event
-                    WritableMap eventParams = Arguments.createMap();
-                    eventParams.putString("data", data);
-                    sendEvent(mReactContext, event_data, eventParams);
-                    //clear incoming
-                    data = "";
+            int incomingByte;
+            ByteBuffer byteBuffer = ByteBuffer.allocate(512);
+            BufferedInputStream bufferedInputStream = new BufferedInputStream(clientSocket.getInputStream());
+            char c = '?';
+            do {
+                if ((incomingByte = bufferedInputStream.read()) != -1 || bufferedInputStream.available() != 0) {
+                    byteBuffer.put((byte)incomingByte);
                 } else {
-                    data += (char) incomingByte;
-                }
+                    c--;
+                } 
+            } while (clientSocket.isConnected() && ((incomingByte >= 0 && bufferedInputStream.available() > 0) || (incomingByte == -1 && byteBuffer.position() <= 1)) && c > '\000');
+
+            //emit event
+            WritableMap eventParams = Arguments.createMap();
+            String data = new String( byteBuffer.array(), StandardCharsets.UTF_8 ).trim();
+            eventParams.putString("data", data);
+            sendEvent(mReactContext, event_data, eventParams);
+            //clear incoming
+            data = "";
+
+            if (incomingByte == -1) {
+                isOpen = false;
+                //emit event
+                WritableMap eventParamsClose = Arguments.createMap();
+                sendEvent(mReactContext, event_closed, eventParamsClose);
             }
         } catch (IOException e) {
             handleIOException(e);
