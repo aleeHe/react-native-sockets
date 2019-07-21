@@ -110,6 +110,7 @@ public class SocketClient {
                     byte[] message = params[0].getBytes();
                     OutputStream outputStream = clientSocket.getOutputStream();
                     outputStream.write(message);
+                    outputStream.flush();
                 } catch (IOException e) {
                     handleIOException(e);
                 }
