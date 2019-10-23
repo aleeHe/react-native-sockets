@@ -13,19 +13,22 @@ import com.facebook.react.bridge.ReadableMap;
 
 import android.util.Log;
 import android.os.AsyncTask;
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 import android.util.SparseArray;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.PrintStream;
+import java.io.BufferedInputStream;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketException;
 import java.util.Enumeration;
+import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -172,33 +175,36 @@ public class SocketServer {
         @Override
         public void run() {
             try {
-                String data = "";
-                InputStream inputStream = hostThreadSocket.getInputStream();
-                while (isOpen && clientConnected) {
-                    int incomingByte = inputStream.read();
-
-                    if (incomingByte == -1) {
-                        clientConnected = false;
-                        //debug log
-                        Log.v(eTag, "Client disconnected");
-                        //emit event
-                        WritableMap eventParams = Arguments.createMap();
-                        eventParams.putInt("client", cId);
-                        sendEvent(mReactContext, event_clientDisconnect, eventParams);
-                    } else if (incomingByte == EOT) {
-                        //debug log
-                        Log.d(eTag, "client received message: " + data);
-                        //emit event
-                        WritableMap eventParams = Arguments.createMap();
-                        eventParams.putInt("client", cId);
-                        eventParams.putString("data", data);
-                        sendEvent(mReactContext, event_data, eventParams);
-                        //clear incoming
-                        data = "";
+                int incomingByte;
+                ByteBuffer byteBuffer = ByteBuffer.allocate(512);
+                BufferedInputStream bufferedInputStream = new BufferedInputStream(hostThreadSocket.getInputStream());
+                char c = '?';
+                do {
+                    if ((incomingByte = bufferedInputStream.read()) != -1 || bufferedInputStream.available() != 0) {
+                        byteBuffer.put((byte)incomingByte);
                     } else {
-                        data += (char) incomingByte;
-                    }
+                        c--;
+                    } 
+                } while (hostThreadSocket.isConnected() && ((incomingByte >= 0 && bufferedInputStream.available() > 0) || (incomingByte == -1 && byteBuffer.position() <= 1)) && c > '\000');
 
+                //emit event
+                WritableMap eventParams = Arguments.createMap();
+                String data = new String( byteBuffer.array(), StandardCharsets.UTF_8 ).trim();
+                eventParams.putInt("client", cId);
+                eventParams.putString("data", data);
+                sendEvent(mReactContext, event_data, eventParams);
+                //clear incoming
+                data = "";
+
+                if (incomingByte == -1) {
+                    clientConnected = false;
+                    isOpen = false;
+                    //debug log
+                    Log.v(eTag, "Client disconnected");
+                    //emit event
+                    WritableMap eventParamsClose = Arguments.createMap();
+                    eventParamsClose.putInt("client", cId);
+                    sendEvent(mReactContext, event_clientDisconnect, eventParamsClose);
                 }
             } catch (IOException e) {
                 handleIOException(e);
